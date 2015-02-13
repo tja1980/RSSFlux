@@ -9,14 +9,16 @@ use Getopt::Long;
 
 use Data::Dumper;
 
-my $source;
-my $destination;
+
 
 my $driver      = "mysql";
 my $database    = "rss";
 my $dsn         = "DBI:$driver:dbname=$database";
-my $username    = "";
-my $password    = "";
+my $username    = "root";
+my $password    = "5n00Py1337";
+
+my $source;
+my $destination;
 
 GetOptions( "source=s"	=> \$source, "destination=s"	=> \$destination )
 	or die ( "Error in command line arguments!\n" );
