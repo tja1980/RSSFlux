@@ -15,10 +15,10 @@ use XML::RSS::Parser::Lite;
 use lib 'lib';
 
 my $driver      = "mysql";
-my $database    = "rss";
+my $database    = "";
 my $dsn         = "DBI:$driver:dbname=$database";
-my $username    = "root";
-my $password    = "5n00Py1337";
+my $username    = "";
+my $password    = "";
 
 
 
