@@ -3,7 +3,6 @@
 use strict;
 use warnings;
 
-
 use LWP;
 use TryCatch;
 use XML::RSS::Parser::Lite;
@@ -17,7 +16,7 @@ use Moose;
 use Schema;
 
 
-our $VERSION = '1.0';
+our $VERSION = '1.1';
 
 my $config = Config::Tiny->read( 'default.conf' );
 
@@ -26,11 +25,7 @@ my $log    = Log::Tiny->new( $config->{log}->{filename} )
                     " for write. (Cause: " . Log::Tiny->errstr . ")" );
 
 {
-    # ^([A-Za-z\.\-0-9]{1,})([S]{1}[0-9]{1,2}[E]{1}[0-9]{1,2}).{1,}$
-    
     $log->INFO ( sprintf ( "Fetcher, Version %s", $VERSION ) );
-    
-    $log->DEBUG ( Dumper ( $config ) );
     
     my $schema  = Schema->connect (
         $config->{database}->{dsn}, $config->{database}->{username}, $config->{database}->{password}
@@ -44,7 +39,7 @@ my $log    = Log::Tiny->new( $config->{log}->{filename} )
         my $response    = $browser->get ( $urls->{$key}->{'url'} );
         
         unless ( $response->is_success ) {
-            _warn ( "Can't get $urls->{$key}->{'url'}. (Cause: " . $response->status_line . ")" );
+            _warn ( "Can't get " . $urls->{$key}->{'url'} . ". (Cause: " . $response->status_line . ")" );
             next;
         }
         
@@ -56,6 +51,7 @@ my $log    = Log::Tiny->new( $config->{log}->{filename} )
             my $it = $rp->get($i);
             
             if ( get_torrent_history ( $schema, $it->get('title') ) == 0 ) {
+                
                 set_torrent_history ( $schema, {
                     'title' => $it->get('title'),
                     'url'   => $it->get('url'),
@@ -64,72 +60,59 @@ my $log    = Log::Tiny->new( $config->{log}->{filename} )
             }
             
             foreach my $watchItem ( keys ( %{$watchFor} ) ) {
-                
                 my $item = $it->get('title');
                 
-                $item =~ m/^([A-Za-z\.\-0-9]{1,})[\.]{1}([S]{1}[0-9]{1,2}[E]{1}[0-9]{1,2}).{1,}$/;
-                
-                my $showName        = uc( $1 );
-                my $seasonEpisode   = uc( $2 );
-                
-                # TODO: Add double ep feature..
-                
-                my $matchString     = ( $watchItem ) =~ s/\s/\./g;
-                
-                if ( $showName eq $matchString ) {
-                    if ( defined( $watchFor->{$watchItem}->{'has'} ) ) {
+                if ( uc( $item ) =~ m/^([A-Z\.\-0-9\s]{1,})([S]{1}[0-9]{1,2}[E]{1}[0-9]{1,2}).{1,}$/ ) {
+                    my $showName        = $1;
+                    my $seasonEpisode   = $2;
+                    
+                    $showName =~ s/\s$//g;
+                    
+                    if ( $showName eq uc( $watchItem ) ) {
                         
-                        next if _notKeywords ( $watchItem, $watchFor->{$watchItem}->{'not'} ) == 1;
-                        next if _hasKeywords ( $watchItem, $watchFor->{$watchItem}->{'has'} ) == 1;
+                        $log->INFO ( "Found TV Show " . $showName );
                         
-                        # if ( $it->get('url') =~ m/([\.0-9\-A-Za-z]{1,}[\.]{1}[a-z]{1,})[\?]{1}/ ) {
-                        
-                        
-                        if ( int ( $watchFor->{$watchItem}->{'smartepfilter'} ) == 1 ) {
-                            if ( $it->get('title') =~ m/S([0-9]{1,})E([0-9]{1,})/ ) {
+                        next if _notKeywords ( $item, $watchFor->{$watchItem}->{'not'} ) == 1;
+                        next if _hasKeywords ( $item, $watchFor->{$watchItem}->{'has'} ) == 0;
+                            
+                        if ( $it->get('title') =~ m/S([0-9]{1,})E([0-9]{1,})/ ) {
+                            my $season 	= $1;
+                            my $episode	= $2;
+                            
+                            if ( $it->get('url') =~ m/([\.0-9\-A-Za-z]{1,}[\.]{1}[a-z]{1,})[\?]{1}/ ) {
+                                my $torrentSaveTo = sprintf ( "%s/%s", $config->{'paths'}->{'torrents'}, $1 );
                                 
-                                my $season 	= $1;
-                                my $episode	= $2;
-                                
-                                next if smart_ep_filter ( $schema, $watchFor->{$watchItem}->{'id'}, $season, $episode ) >= 1;
-
-                                update_last_seen ( $schema, $watchFor->{$watchItem}->{'id'} );
-                                
-                                #my $filename;
-                                #
-                                #print Dumper $it;
-                                #
-                                #if ( $it->get('url') =~ m/([\.0-9\-A-Za-z]{1,}[\.]{1}[a-z]{1,})[\?]{1}/ ) {
-                                #
-                                #    print Dumper $it->get('url');
-                                #
-                                #    $filename = $1;
-                                #
-                                #    #getstore ( $it->get('url'), sprintf ( "%s/%s", '/mnt/data/rss/received', $filename ) )
-                                #    #	or die $!;a
-                                #    $response = $browser->get($it->get('url'),':content_file' => sprintf ( "%s/%s", '/mnt/data/rss/received', $filename ));
-                                #
-                                #    print Dumper $response;
-                                #    
-                                #    if ( $response->is_success ) {
-                                #            update_smart_ep_filter ( $watchFor->{$watchItem}->{'id'}, $season, $episode );
-                                #    }
-                                #    else {
-                                #            die "Can't get $it->get('url') -- ", $response->status_line;
-                                #    }
-                                #
-                                #}
-
-                                        
-                                
-
+                                $response = $browser->get($it->get('url'),':content_file' => $torrentSaveTo );
+    
+                                if ( $response->is_success ) {
+                                    $log->INFO("Saved .torrent as " . $torrentSaveTo );
+                                }
+                                else {
+                                    _warn("Can't retrieve torrent url " . $it->get('url') . ", returned " . $response->status_line );
+                                    next;
+                                }
                             }
                             else {
-                                printf "Couldn't reliably determine Season and/or Episode, sorry!\n";
+                                _warn("Couldn't determine a filename to save the .torrent from url " . $it->get('url') . ".");
+                                next;
                             }
-    
+                            
+                            if ( $watchFor->{$watchItem}->{'smartepfilter'} eq 'Y' ) {
+                                if ( smart_ep_filter ( $schema, $watchFor->{$watchItem}->{'id'}, $season, $episode ) >= 1 ) {
+                                    $log->INFO("Episode has allready been registered, won't do anything with this." );
+                                    next;
+                                }
+                                else {
+                                    update_smart_ep_filter ( $schema, $watchFor->{$watchItem}->{'id'}, $season, $episode );
+                                }
+                            }
                         }
-                        
+                        else {
+                            printf "Couldn't reliably determine Season and/or Episode, sorry!\n";
+                            next
+                        }
+    
+                        update_last_seen ( $schema, $watchFor->{$watchItem}->{'id'} );
                     }
                 }
             }
@@ -161,6 +144,8 @@ sub _notKeywords {
                         
     foreach my $not ( @notKeywords ) {
         if ( $item =~ m/$not/ ) {
+            $log->INFO( "Matched 'not' keyword " . $not . "." );
+            
             $fail = 1;
             last;
         }
@@ -173,13 +158,15 @@ sub _notKeywords {
 
 sub _hasKeywords {
     my ( $item, $keywords ) = @_;
-    my $fail = 0;
+    my $fail = 1;
     
     my @hasKeywords = split ( /,/, $keywords );
                         
     foreach my $has ( @hasKeywords ) {
         unless ( $item =~ m/$has/ ) {
-            $fail = 1;
+            $log->INFO( "Matched 'has' keyword " . $has . "." );
+            
+            $fail = 0;
             last;
         }
     }
@@ -196,15 +183,25 @@ sub _hasKeywords {
 sub smart_ep_filter {
     my ( $schema, $id, $season, $episode_number ) = @_;
 
-    my $exists = $schema->resultset('SmartEpFilter')->search(
-        {
-            'watch_id'  => $id,
+    my $exists = $schema->resultset('SmartEpFilter')->search({
+            'watchid'  => $id,
             'season'    => $season,
             'episode'   => $episode_number
-        }
-    )->count;
+        } )->count;
     
     return $exists;    
+}
+
+sub update_smart_ep_filter {
+    my ( $schema, $id, $season, $episode_number ) = @_;
+    
+    $schema->resultset("SmartEpFilter")->create( {
+        'watchid'  => $id,
+        'season'    => $season,
+        'episode'   => $episode_number
+    } );
+    
+    $log->INFO("Added Episode to Smart EP Filter.")
 }
 
 sub get_rss_urls {
@@ -219,7 +216,9 @@ sub get_rss_urls {
         next if $result->enabled != 1;
         
         $urls->{$result->name} = {
-            url => $result->url 
+            'id'        => $result->id,
+            'url'       => $result->url,
+            'enabled'   => $result->enabled,
         };
         
         $log->INFO ( "Added Feed URL " . $result->name );
@@ -230,13 +229,13 @@ sub get_rss_urls {
 }
 
 sub update_last_seen {
-    my ( $schema, $id ) = shift;
-
-    $schema->resultset("Watch")->search(
+    my ( $schema, $id ) = @_;
+    
+    my $result = $schema->resultset("Watch")->search(
         { 'id' => $id }
     );
     
-    $schema->update({ lastseen => 'NOW()' });
+    $result->update({ lastseen => \'NOW()' });
 }
 
 sub get_watch_for {
@@ -256,7 +255,7 @@ sub get_watch_for {
             'id'	            => $result->id,
             'has'               => $result->has,
             'not'	            => $result->not,
-            'smartepfilter'   => $result->smart_ep_filter
+            'smartepfilter'   => $result->smartepfilter
         };
         
         $log->INFO ( "Added Watch Rule for " . $result->name );
@@ -269,20 +268,14 @@ sub get_watch_for {
 sub set_torrent_history {
     my ( $schema, $detail ) = @_;
     
-    $log->DEBUG(sprintf("Set Torrent %s ", $detail->{'title'} ) );
-    
     $schema->resultset("Torrents")->create( $detail );
 }
 
 sub get_torrent_history {
     my ( $schema, $title ) = @_;
     
-    
-    
     my $exists = $schema->resultset("Torrents")->search( {
         'title' => $title } )->count;
-    
-    $log->DEBUG(sprintf("Get Torrent count %s for %s ", $exists, $title ) );
     
     return $exists;
 }
