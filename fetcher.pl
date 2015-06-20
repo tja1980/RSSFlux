@@ -1,305 +1,288 @@
-#!bin/env perl
+#!/usr/bin/env perl
 
 use strict;
 use warnings;
 
-use Data::Dumper;
 
-use DBI;
-use File::Fetch;
-use Getopt::Long;
 use LWP;
+use TryCatch;
 use XML::RSS::Parser::Lite;
 
+use Data::Dumper;
 
 use lib 'lib';
-
-my $driver      = "mysql";
-my $database    = "";
-my $dsn         = "DBI:$driver:dbname=$database";
-my $username    = "";
-my $password    = "";
+use Config::Tiny;
+use Log::Tiny;
+use Moose;
+use Schema;
 
 
+our $VERSION = '1.0';
+
+my $config = Config::Tiny->read( 'default.conf' );
+
+my $log    = Log::Tiny->new( $config->{log}->{filename} )
+                or _error ( "Could not open log file " . $config->{log}->{filename} .
+                    " for write. (Cause: " . Log::Tiny->errstr . ")" );
 
 {
-
-	my $urls 	= get_rss_urls();
-	my $watchFor	= get_watch_for();
-
-	foreach my $key ( keys ( %{$urls} ) ) {
-		printf STDOUT ( "Fetching Feed URL %s...\n", $key );
-
-		#my $xml = get ( $urls->{$key}->{'url'} );
-
-		my $browser = LWP::UserAgent->new;
-		my $response = $browser->get ( $urls->{$key}->{'url'} );
-   	 	
-		die "Can't get $urls->{$key}->{'url'} -- ", $response->status_line
-			unless $response->is_success;
-
-		my $rp 	= new XML::RSS::Parser::Lite;
-		$rp->parse($response->content);
-
-		print Dumper $response->content;
-    		
-		for (my $i = 0; $i < $rp->count(); $i++) {
-		        my $it = $rp->get($i);
-
-			my $failKeyword = 0;
+    # ^([A-Za-z\.\-0-9]{1,})([S]{1}[0-9]{1,2}[E]{1}[0-9]{1,2}).{1,}$
+    
+    $log->INFO ( sprintf ( "Fetcher, Version %s", $VERSION ) );
+    
+    $log->DEBUG ( Dumper ( $config ) );
+    
+    my $schema  = Schema->connect (
+        $config->{database}->{dsn}, $config->{database}->{username}, $config->{database}->{password}
+    );
+    
+    my $urls        = get_rss_urls( $schema );
+    my $watchFor    = get_watch_for( $schema );
+    
+    foreach my $key ( keys ( %{$urls} ) ) {
+        my $browser     = LWP::UserAgent->new;
+        my $response    = $browser->get ( $urls->{$key}->{'url'} );
         
-		        foreach my $watchItem ( keys ( %{$watchFor} ) ) {
-		            if ( $it->get('title') =~ m/$watchItem/ ) {
-		                printf ( " - Found series match %s...\n", $watchItem );
-		                if ( defined( $watchFor->{$watchItem}->{'has'} ) ) {
-				   printf ( "\t* Title: %s\n", $it->get('title') );
-                    
-                    
-                		    #
-		                    ##  Check our 'has' rules...
-		                    ###
+        unless ( $response->is_success ) {
+            _warn ( "Can't get $urls->{$key}->{'url'}. (Cause: " . $response->status_line . ")" );
+            next;
+        }
+        
+        my $rp 	= new XML::RSS::Parser::Lite;
+        
+        $rp->parse($response->content);
+        
+        for (my $i = 0; $i < $rp->count(); $i++) {
+            my $it = $rp->get($i);
+            
+            if ( get_torrent_history ( $schema, $it->get('title') ) == 0 ) {
+                set_torrent_history ( $schema, {
+                    'title' => $it->get('title'),
+                    'url'   => $it->get('url'),
+                    'rid'   => $urls->{$key}->{'id'}
+                });
+            }
+            
+            foreach my $watchItem ( keys ( %{$watchFor} ) ) {
+                
+                my $item = $it->get('title');
+                
+                $item =~ m/^([A-Za-z\.\-0-9]{1,})[\.]{1}([S]{1}[0-9]{1,2}[E]{1}[0-9]{1,2}).{1,}$/;
+                
+                my $showName        = uc( $1 );
+                my $seasonEpisode   = uc( $2 );
+                
+                # TODO: Add double ep feature..
+                
+                my $matchString     = ( $watchItem ) =~ s/\s/\./g;
+                
+                if ( $showName eq $matchString ) {
+                    if ( defined( $watchFor->{$watchItem}->{'has'} ) ) {
+                        
+                        next if _notKeywords ( $watchItem, $watchFor->{$watchItem}->{'not'} ) == 1;
+                        next if _hasKeywords ( $watchItem, $watchFor->{$watchItem}->{'has'} ) == 1;
+                        
+                        # if ( $it->get('url') =~ m/([\.0-9\-A-Za-z]{1,}[\.]{1}[a-z]{1,})[\?]{1}/ ) {
+                        
+                        
+                        if ( int ( $watchFor->{$watchItem}->{'smart_ep_filter'} ) == 1 ) {
+                            if ( $it->get('title') =~ m/S([0-9]{1,})E([0-9]{1,})/ ) {
+                                
+                                my $season 	= $1;
+                                my $episode	= $2;
+                                
+                                next if smart_ep_filter ( $schema, $watchFor->{$watchItem}->{'id'}, $season, $episode ) >= 1;
 
-				    my @hasKeywords = $watchFor->{$watchItem}->{'has'};	
+                                update_last_seen ( $schema, $watchFor->{$watchItem}->{'id'} );
+                                
+                                #my $filename;
+                                #
+                                #print Dumper $it;
+                                #
+                                #if ( $it->get('url') =~ m/([\.0-9\-A-Za-z]{1,}[\.]{1}[a-z]{1,})[\?]{1}/ ) {
+                                #
+                                #    print Dumper $it->get('url');
+                                #
+                                #    $filename = $1;
+                                #
+                                #    #getstore ( $it->get('url'), sprintf ( "%s/%s", '/mnt/data/rss/received', $filename ) )
+                                #    #	or die $!;a
+                                #    $response = $browser->get($it->get('url'),':content_file' => sprintf ( "%s/%s", '/mnt/data/rss/received', $filename ));
+                                #
+                                #    print Dumper $response;
+                                #    
+                                #    if ( $response->is_success ) {
+                                #            update_smart_ep_filter ( $watchFor->{$watchItem}->{'id'}, $season, $episode );
+                                #    }
+                                #    else {
+                                #            die "Can't get $it->get('url') -- ", $response->status_line;
+                                #    }
+                                #
+                                #}
 
-					printf "\t* Checking 'has' keyword rules...\n";
-                    
-                		    foreach my $has ( @hasKeywords ) {
-					 printf ( "\t -> '%s' ... ", $has ); 
+                                        
+                                
 
-		                        if ($it->get('title') =~ m/$has/ ) {
-                		            printf "Found\n";
-		                        }
-                		        else {
-		                            printf ( "Not Found\n", $has );
-						$failKeyword = 1;
-                		        }
-		                    }
-                    
-		                    #
-		                    ##  Smart EP Filtering
-		                    ###
-                    			if (( int ( $watchFor->{$watchItem}->{'smart_ep_filter'} ) == 1 ) && ( $failKeyword == 0 ) ) {
-	                		    	if ( $it->get('title') =~ m/S([0-9]{1,})E([0-9]{1,})/ ) {
-		                        		printf "\t* Querying Smart Episode Filter\n";
-							my $season 	= $1;
-							my $episode	= $2;
-							
-							my $exists = smart_ep_filter ( $watchFor->{$watchItem}->{'id'}, $season, $episode );
-
-							if ( $exists ) {
-								printf "\t -> Allready registered!\n";
-							}
-							else {
-
-								# 2.Broke.Girls.S03E24.720p.HDTV.X264-DIMENSION.torrent
-								my $filename;
-
-								print Dumper $it;
-
-								if ( $it->get('url') =~ m/([\.0-9\-A-Za-z]{1,}[\.]{1}[a-z]{1,})[\?]{1}/ ) {
-
-									print Dumper $it->get('url');
-
-									$filename = $1;
-
-									#getstore ( $it->get('url'), sprintf ( "%s/%s", '/mnt/data/rss/received', $filename ) )
-									#	or die $!;a
-									$response = $browser->get($it->get('url'),':content_file' => sprintf ( "%s/%s", '/mnt/data/rss/received', $filename ));
-
-									print Dumper $response;
-									
-									if ( $response->is_success ) {
-										update_smart_ep_filter ( $watchFor->{$watchItem}->{'id'}, $season, $episode );
-									}
-									else {
-										die "Can't get $it->get('url') -- ", $response->status_line;
-									}
-
-								}
-
-								
-							}
-	
-						}
-						else {
-							printf "Couldn't reliably determine Season and/or Episode, sorry!\n";
-						}
-	
-		         	        }
-        		            
-                    
-               			 }
-		            }
-		        }
-		}
-	}
+                            }
+                            else {
+                                printf "Couldn't reliably determine Season and/or Episode, sorry!\n";
+                            }
+    
+                        }
+                        
+                    }
+                }
+            }
+        }
+    }
+    
 }
 
 #
-##  Database Functions
+##  Common
 ###
-
-sub __connect {
-    my $dbh = DBI->connect($dsn,$username,$password, { RaiseError => 1 })
-        or die $DBI::errstr;
-        
-    return $dbh;
+    
+sub _error {
+    my $message = shift;    
+    $log->ERROR ( $message );    
+    die $message;
 }
 
-sub __disconnect {
-    my $dbh = shift;
+sub _warn {
+    my $message = shift;    
+    $log->WARN ( $message );    
+}
+
+sub _notKeywords {
+    my ( $item, $keywords ) = @_;
+    my $fail = 0;
     
-    $dbh->disconnect();
+    my @notKeywords = split ( /,/, $keywords );
+                        
+    foreach my $not ( @notKeywords ) {
+        if ( $item =~ m/$not/ ) {
+            $fail = 1;
+            last;
+        }
+    }
+    
+    undef ( @notKeywords );
+    
+    return $fail;
+}
+
+sub _hasKeywords {
+    my ( $item, $keywords ) = @_;
+    my $fail = 0;
+    
+    my @hasKeywords = split ( /,/, $keywords );
+                        
+    foreach my $has ( @hasKeywords ) {
+        unless ( $item =~ m/$has/ ) {
+            $fail = 1;
+            last;
+        }
+    }
+    
+    undef ( @hasKeywords );
+    
+    return $fail;
+}
+
+#
+##  Functions
+###
+
+sub smart_ep_filter {
+    my ( $schema, $id, $season, $episode_number ) = @_;
+
+    my $exists = $schema->resultset('SmartEpFilter')->search(
+        {
+            'watch_id'  => $id,
+            'season'    => $season,
+            'episode'   => $episode_number
+        }
+    )->count;
+    
+    return $exists;    
 }
 
 sub get_rss_urls {
-	my $dbh = __connect ();
-
-	my $sql = sprintf "SELECT * FROM rss_feed_urls";
-
-	my $sth = $dbh->prepare ( $sql )
-		or die $!;
-
-	$sth->execute()
-		or die $!;
-
-	my $urls = ();
-
-	while ( my $row = $sth->fetchrow_hashref()) {
-		print Dumper $row;
-
-		if ( int ( $row->{'enabled'} ) == 1 ) {
-			unless ( defined ( $urls->{$row->{'name'}} ) ) {
-				$urls->{$row->{'name'}} = {
-						'url'	=> $row->{'url'}
-					};
-			}
-		}
-	}
-
-	$sth->finish();
-
-	__disconnect ( $dbh );
-
-	return $urls;
-	
-}
-
-sub get_watch_for {
-        my $dbh = __connect ();
-
-        my $sql = sprintf "SELECT * FROM rss_watch";
-
-        my $sth = $dbh->prepare ( $sql )
-                or die $!;
-
-        $sth->execute()
-                or die $!;
-
-        my $rules = ();
-
-        while ( my $row = $sth->fetchrow_hashref()) {
-                unless ( defined ( $rules->{$row->{'name'}} ) ) {
-
-			my @has;
-			my @not;
-
-			if ( index ( $row->{'has'}, "," ) > 0 ) {
-				@has = split ( /,/, $row->{'has'} );
-			}
-			else {
-				push ( @has, $row->{'has'} );
-			}	
-
-                	$rules->{$row->{'name'}} = {
-				'id'	=> $row->{'id'},
-                        	'has'   => @has,
-				'not'	=> undef,
-				'smart_ep_filter'	=> $row->{'smart_ep_filter'}
-
-                        };
-
-			undef @has;
-			undef @not;
-                }
-        }
-
-        $sth->finish();
-
-        __disconnect ( $dbh );
-
-        return $rules;
-}
-
-sub smart_ep_filter {
-	my ( $id, $season, $episode_number ) = @_;
-
-        my $dbh = __connect ();
-
-        my $sql = sprintf ( "SELECT * FROM smart_ep_filter WHERE watch_id = '%s' AND season = '%s' and episode = '%s'", $id, $season, $episode_number ) ;
-
-        my $sth = $dbh->prepare ( $sql )
-                or die $!;
-
-        $sth->execute()
-                or die $!;
-
-        my $episode = ();
-
-        while ( my $row = $sth->fetchrow_hashref()) {
-               $episode->{$row->{'id'}} = {
-                                'season'   => $row->{'season'},
-                                'episode'   => $row->{'episode'},
-                                'watch_id'       => $row->{'watch_id'}
-
-               };
-
-
-        }
-
-        $sth->finish();
-
-        __disconnect ( $dbh );
-
-        return $episode;
-}
-
-
-sub update_smart_ep_filter {
-        my ( $id, $season, $episode ) = @_;
-
-        my $dbh = __connect ();
-
-        my $sql = sprintf "INSERT INTO smart_ep_filter (season, episode, watch_id, added ) VALUES ( ?, ?, ?, NOW() )";
-
-        my $sth = $dbh->prepare ( $sql )
-                or die $!;
-
-        $sth->execute( $season, $episode, $id )
-                or die $!;
-
-        $sth->finish();
-
-        __disconnect ( $dbh );
-
-	update_last_seen ( $id );
+    my $schema  = shift;
+    my $urls    = ();
+    
+    $log->INFO( "Getting RSS Feed Urls..." );
+    
+    my @results = $schema->resultset('Feeds')->all;
+    
+    foreach my $result ( @results ) {
+        next if $result->enabled != 1;
+        
+        $urls->{$result->name} = {
+            url => $result->url 
+        };
+        
+        $log->INFO ( "Added Feed URL " . $result->name );
+    }
+    
+    return $urls;
+    
 }
 
 sub update_last_seen {
-	my ( $id ) = shift;
+    my ( $schema, $id ) = shift;
 
-	my $dbh = __connect ();
+    $schema->resultset("Watch")->search(
+        { 'id' => $id }
+    );
+    
+    $schema->update({ last_seen => 'NOW()' });
+}
 
-	my $sql = sprintf "UPDATE rss_watch SET last_seen = NOW() WHERE id = ?";
+sub get_watch_for {
+    my $schema  = shift;
+    my $rules   = ();
+    
+    $log->INFO ( "Getting Watch Rules..." );
+    
+    my @results = $schema->resultset('Watch')->all;
+    
+    foreach my $result ( @results ) {
+        if ( defined ( $rules->{$result->name} ) ) {
+            _warn ( "Show " . $result->name . ", with id " . $result->id . " allready exists in watch list." );
+        }
+        
+        $rules->{$result->name} = {
+            'id'	            => $result->id,
+            'has'               => $result->has,
+            'not'	            => $result->not,
+            'smart_ep_filter'   => $result->smart_ep_filter
+        };
+        
+        $log->INFO ( "Added Watch Rule for " . $result->name );
+    }
+    
+    return $rules;
+    
+}
 
-	 my $sth = $dbh->prepare ( $sql )
-                or die $!;
+sub set_torrent_history {
+    my ( $schema, $detail ) = @_;
+    
+    $log->DEBUG(sprintf("Set Torrent %s ", $detail->{'title'} ) );
+    
+    $schema->resultset("Torrents")->create( $detail );
+}
 
-        $sth->execute( $id )
-                or die $!;
-
-        $sth->finish();
-
-        __disconnect ( $dbh );
-
+sub get_torrent_history {
+    my ( $schema, $title ) = @_;
+    
+    
+    
+    my $exists = $schema->resultset("Torrents")->search( {
+        'title' => $title } )->count;
+    
+    $log->DEBUG(sprintf("Get Torrent count %s for %s ", $exists, $title ) );
+    
+    return $exists;
 }
