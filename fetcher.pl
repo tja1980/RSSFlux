@@ -85,7 +85,7 @@ my $log    = Log::Tiny->new( $config->{log}->{filename} )
                         # if ( $it->get('url') =~ m/([\.0-9\-A-Za-z]{1,}[\.]{1}[a-z]{1,})[\?]{1}/ ) {
                         
                         
-                        if ( int ( $watchFor->{$watchItem}->{'smart_ep_filter'} ) == 1 ) {
+                        if ( int ( $watchFor->{$watchItem}->{'smartepfilter'} ) == 1 ) {
                             if ( $it->get('title') =~ m/S([0-9]{1,})E([0-9]{1,})/ ) {
                                 
                                 my $season 	= $1;
@@ -236,7 +236,7 @@ sub update_last_seen {
         { 'id' => $id }
     );
     
-    $schema->update({ last_seen => 'NOW()' });
+    $schema->update({ lastseen => 'NOW()' });
 }
 
 sub get_watch_for {
@@ -256,7 +256,7 @@ sub get_watch_for {
             'id'	            => $result->id,
             'has'               => $result->has,
             'not'	            => $result->not,
-            'smart_ep_filter'   => $result->smart_ep_filter
+            'smartepfilter'   => $result->smart_ep_filter
         };
         
         $log->INFO ( "Added Watch Rule for " . $result->name );
