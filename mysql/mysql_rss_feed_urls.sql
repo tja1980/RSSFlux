@@ -1,6 +1,6 @@
 -- --------------------------------------------------------
--- Host:                         perlnx01py13
--- Server version:               5.5.41-0ubuntu0.14.04.1 - (Ubuntu)
+-- Host:                         perlnx02py14
+-- Server version:               5.5.43-0ubuntu0.14.04.1 - (Ubuntu)
 -- Server OS:                    debian-linux-gnu
 -- HeidiSQL Version:             8.3.0.4694
 -- --------------------------------------------------------
@@ -10,18 +10,14 @@
 /*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;
 /*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
 
--- Dumping database structure for rss
-CREATE DATABASE IF NOT EXISTS `rss` /*!40100 DEFAULT CHARACTER SET latin1 */;
-USE `rss`;
-
-
--- Dumping structure for table rss.rss_feed_urls
+-- Dumping structure for table rss_test.rss_feed_urls
 CREATE TABLE IF NOT EXISTS `rss_feed_urls` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `name` varchar(120) NOT NULL,
   `url` varchar(300) NOT NULL,
   `description` text,
-  `enabled` tinyint(4) NOT NULL,
+  `enabled` tinyint(1) NOT NULL,
+  `category` int(11) DEFAULT NULL,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 

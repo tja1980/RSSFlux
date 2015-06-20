@@ -1,6 +1,6 @@
 -- --------------------------------------------------------
--- Host:                         perlnx01py13
--- Server version:               5.5.41-0ubuntu0.14.04.1 - (Ubuntu)
+-- Host:                         perlnx02py14
+-- Server version:               5.5.43-0ubuntu0.14.04.1 - (Ubuntu)
 -- Server OS:                    debian-linux-gnu
 -- HeidiSQL Version:             8.3.0.4694
 -- --------------------------------------------------------
@@ -10,13 +10,13 @@
 /*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;
 /*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
 
--- Dumping structure for table rss.smart_ep_filter
+-- Dumping structure for table rss_test.smart_ep_filter
 CREATE TABLE IF NOT EXISTS `smart_ep_filter` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
   `season` int(11) NOT NULL,
   `episode` int(11) NOT NULL,
-  `watch_id` int(11) NOT NULL,
-  `added` date NOT NULL,
+  `watchid` int(11) NOT NULL,
+  `added` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 

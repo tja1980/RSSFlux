@@ -10,15 +10,16 @@
 /*!40014 SET @OLD_FOREIGN_KEY_CHECKS=@@FOREIGN_KEY_CHECKS, FOREIGN_KEY_CHECKS=0 */;
 /*!40101 SET @OLD_SQL_MODE=@@SQL_MODE, SQL_MODE='NO_AUTO_VALUE_ON_ZERO' */;
 
--- Dumping structure for table rss_test.rss_watch
-CREATE TABLE IF NOT EXISTS `rss_watch` (
+-- Dumping structure for table rss_test.rss_torrents
+CREATE TABLE IF NOT EXISTS `rss_torrents` (
   `id` int(11) NOT NULL AUTO_INCREMENT,
-  `name` varchar(150) NOT NULL,
-  `has` varchar(300) NOT NULL,
-  `not` varchar(300) NOT NULL,
-  `smartepfilter` enum('Y','N') NOT NULL,
-  `lastseen` timestamp NULL DEFAULT '0000-00-00 00:00:00',
-  PRIMARY KEY (`id`)
+  `title` varchar(100) NOT NULL,
+  `url` varchar(300) NOT NULL,
+  `category` varchar(300) DEFAULT NULL,
+  `added` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  `rid` int(11) NOT NULL,
+  PRIMARY KEY (`id`),
+  KEY `title` (`title`)
 ) ENGINE=InnoDB DEFAULT CHARSET=latin1;
 
 -- Data exporting was unselected.
